@@ -1,0 +1,17 @@
+
+使用缓冲区读出数据（主循环）
+if(U0CB.IN != U0CB.OUT)
+		{
+			u0_printf("wordlength:%d\r\n",U0CB.OUT->end - U0CB.OUT->star+1);
+			for(uint8_t i=0;i<U0CB.OUT->end-U0CB.OUT->star+1;i++)
+			{
+				u0_printf("%c",U0CB.OUT->star[i]);
+			}
+			u0_printf("\r\n\r\n");
+			U0CB.OUT++;
+				if(U0CB.OUT == U0CB.END)
+				{
+					U0CB.OUT=U0CB.IN=&U0CB.URxDataPtr[0];//�ص������׵�ַ
+				}
+		}		
+		

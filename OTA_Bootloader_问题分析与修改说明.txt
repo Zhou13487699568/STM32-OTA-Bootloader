@@ -1,0 +1,645 @@
+================================================================================
+        STM32F103C8T6  UART-IAP Bootloader  跳转失败 问题分析与修复说明
+================================================================================
+工程目录 : D:\BaiduNetdiskDownload\ST\OTA_bootloder_hal\bootloder
+芯片     : STM32F103C8T6  (Flash 64KB / SRAM 20KB)
+Flash 划分: bootloader 0x08000000~0x08004FFF (20KB)
+            A 区(APP)  0x08005000~0x0800FFFF (44KB)
+编译环境 : Keil MDK  ARMCC V5.06 update 7 (AC5) + HAL 库
+整理日期 : 2026-10-10
+
+
+================================================================================
+零、一句话结论
+================================================================================
+不是跳转函数本身写错了，而是【bootloader 自己的编译产物越过了 A 区起点
+0x08005000】——镜像 23028 字节，比 20KB 多出 2548 字节，多出来的部分正好
+压在 A 区的头上。
+
+于是执行"下载到 A 区"时：
+  1) 擦除 A 区 = 把正在运行的 bootloader 自己擦掉；
+  2) 0x08005000 处读到的不是 A 区向量表，而是 bootloader 的机器码字
+     0x49061D00，被当成 MSP → 判为"不在有效范围"，强行跳转就 HardFault。
+
+另外还叠加了几个独立缺陷（MSP 判据把合法值判错、跳转顺序把中断开在切栈
+之前、擦写没有地址保护等），它们单独也都能造成同样的故障现象。
+
+
+================================================================================
+一、原代码为什么实现不了功能（逐条）
+================================================================================
+
+--------------------------------------------------------------------------------
+【第 1 类 · 致命，必然失败】
+--------------------------------------------------------------------------------
+
+1.1  bootloader 镜像越界到 A 区，而工程设置掩盖了它
+     ------------------------------------------------------------------
+     证据（修改前最后一次构建：MDK-ARM\bootloder\bootloder.map / .hex，
+           2026/10/1 17:39:24，晚于 boot.c，就是当时源码的产物）：
+
+       Load Region LR_IROM1   Base 0x08000000  Size 0x000059F4  = 23028 字节
+       Total ROM Size         23028 (22.49 kB)      <- 可用只有 20KB
+       .hex 最后一条数据记录  0x080059F0(4 字节)     -> 镜像结束于 0x080059F3
+       0x08005000 处的真实内容 0x49061D00            <- 是代码，不是向量表
+       0x08005004 处的真实内容 0xBF006008
+
+     函数落点（全部 >= 0x08005000，即全部坐在 A 区里）：
+       0x080044CC  STM32_EraseFlash     <- 唯一在界内的关键函数
+       0x08004F40  Xmodem_CRC16
+       0x08005034  bootloder_Brance     <- 擦除后要返回的地方
+       0x080050E4  bootloder_Event      (568 字节，跨第 20、21 两页)
+       0x08005408  delay_us
+       0x08005444  main
+       0x08005564  my_iic_readbyte
+       0x08005618  my_iic_sendbyte
+       0x08005698  u0_printf
+       0x08005700~0x080059D3  printf/locale 常量表
+       0x080059D4~0x080059F3  .data 初值(RAM 初值表)
+       另外 0x080050BC 处还存着 bootloder_Brance 用的常量 0x08005000(STM_A_ADDR)
+
+     为什么没被链接器发现：
+       MDK-ARM\bootloder.uvprojx 里 IROM1 的 Size 被写成 0x10000（整个 64KB），
+       链接器认为 0x08000000~0x0800FFFF 全是 bootloader 的地盘，所以不报错。
+
+     失效链条：
+       按 2 -> STM32_EraseFlash(STM_A_PAGE=20, STM_A_PAGE_NUM=44)
+            -> HAL_FLASHEx_Erase 擦掉第 20~63 页 = 0x08005000~0x0800FFFF
+               （此时正在运行的 bootloder_Event/main/u0_printf 全在里面）
+            -> 返回到 STM32_EraseFlash，它要调 u0_printf("AFTER HAL ERASE")
+               而该地址已是 0xFFFFFFFF -> 取指即 HardFault
+            -> 就算侥幸不崩，XMODEM 每写 1KB 都在覆盖 bootloader 自己，
+               下载不可能完整
+       旁证：工程里还留着 MDK-ARM\bootloder\bootloder_sct.Bak，内容是
+             LR_IROM1 0x08005000 0x00010000 —— 说明这个 bootloader 工程曾经
+             被设成"从 A 区启动"，属于历史遗留，务必确认现在用的是 0x08000000。
+
+1.2  MSP 判据把合法值判成错误
+     ------------------------------------------------------------------
+     原代码（hardware/boot.c）：
+         if ((app_msp < 0x20000000) || (app_msp > 0x20004FFF))  -> 报错返回
+
+     STM32F103C8T6 只有 20KB SRAM：有效地址 0x20000000~0x20004FFF，
+     但"初始 MSP"是【栈顶 = RAM 末尾 + 1】，即 0x20005000 是完全合法的，
+     而且这正是 Keil 把栈放在 RAM 顶端时最常见的 __initial_sp 值。
+     原来的条件用 > 0x20004FFF 把它判成错误 -> "明明下载对了也不跳"。
+
+     同时还缺少两个必要检查：
+       - 8 字节对齐（AAPCS 要求）；
+       - 复位入口 PC 的 bit0 必须为 1（Thumb 状态）。
+     补充事实：本工程 bootloader 自己的 __initial_sp = 0x20001328（修改前是
+     0x20002688）——Keil 默认分散加载把 STACK 段紧跟在 ZI 之后，不一定落在
+     0x20005000。所以"合法 MSP"是一个区间，判据必须按区间来，不能写死一个值。
+
+1.3  跳转顺序错误：中断开在切栈之前
+     ------------------------------------------------------------------
+     原代码尾部：
+         BootLoader_Clear();
+         SCB->VTOR = addr;
+         __enable_irq();          <- 中断先开了
+         __set_MSP(app_msp);      <- 栈还没换
+         app_entry();
+
+     危害：在"中断已使能、MSP 还是 bootloader 的栈、VTOR 已指向 A 区"这个
+     窗口里，只要来一个 SysTick 或 USART 中断，硬件就会
+         - 用 bootloader 的栈去压栈；
+         - 却按 A 区的向量表去取入口地址；
+     而 A 区的 .data/.bss 还没初始化、SysTick 还是 bootloader 的 1ms 配置，
+     极容易跑飞成 HardFault。
+     另外：全程没有任何一处关闭 SysTick（HAL_Init 开的 1ms 中断一直在跑），
+     也没有清 NVIC 挂起标志，没有 DSB/ISB 屏障。
+
+1.4  擦除/写入没有地址保护，STM32_WriteFlash 还有计数器下溢
+     ------------------------------------------------------------------
+     (a) STM32_EraseFlash() 完全不检查 start/num，所以能擦到 bootloader 自己；
+         PageAddress 里还硬编码了 * 1024。
+     (b) STM32_WriteFlash(saddr, wdata, wnum) 的 wnum 语义是"字节数"，
+         循环却是 while(wnum > 0){ ...; wnum -= 4; ... }。
+         只要传入的 wnum 不是 4 的倍数，wnum 立刻下溢成 0xFFFFFFFx，
+         变成死循环把整片 Flash 写穿。
+     (c) 同一个函数里 HAL_StatusTypeDef ret; 未初始化，wnum==0 时会读未初始化变量。
+
+--------------------------------------------------------------------------------
+【第 2 类 · 功能性缺陷（会让下载结果不可靠）】
+--------------------------------------------------------------------------------
+
+2.1  接收计数器被截断
+     hardware/my_uart.h:  uint8_t URxcounter;
+     而接收缓冲 U0_RX_SIZE = 2048。累计到 256 就回绕，此后
+     U0CB.IN->star 的落点和帧长度全部错乱。
+
+2.2  IDLE 中断两处隐患 (Core/Src/stm32f1xx_it.c)
+     - recv_len 为 0 时仍执行 &U0_RxBuff[URxcounter-1] -> 下标 -1；
+     - if(U0_RX_SIZE-URxcounter >= U0_RX_MAX) 比 DMA 实际长度 U0_RX_MAX+1
+       少 1，允许 DMA 往"剩余 256 字节"的尾部写 257 字节 -> 越界 1 字节。
+
+2.3  XMODEM 协议处理不严
+     - 只校验 data[0]==0x01 和 CRC，不校验包号取反字节 data[2]==~data[1]；
+     - 重传包（上一次 ACK 丢了导致主机重发同一个包）会被再写一次缓冲，
+       xmodem_NB 多加 1 -> 后面所有数据整体错位一个包 -> 写进 Flash 的
+       向量表就是错的。
+
+2.4  "C"轮询的计时和时机不对 (Core/Src/main.c)
+     - if(updataA.xmodem_timer>=100) 数的是"主循环次数"，而循环里有
+       HAL_Delay(10)，实际约 1 秒，不是注释里说的 100ms；
+     - 整个传输过程中一直发 C。标准 XMODEM 里 C 只用于"等待主机开始发送"，
+       传输途中插 C 会被部分发送端当作异常而触发重传。
+
+2.5  菜单入口判断用错变量 (hardware/boot.c)
+     if(U0_RxBuff[0] == 'w')  —— 这个字节只在"复位后收到的第一个字节恰好
+     是 w"时才有意义，之后 DMA 的落点一直往后走，它就永远不变了。
+
+2.6  命令 4（查询版本）误置版本标志
+     BootStaFlag |= SET_VERSION_FLAG; 写在"查询"分支里，
+     导致之后收到的任意 26 字节帧会被当成版本号写进 EEPROM。
+
+2.7  EOT 结束后没有清 IAP_XMODEMC_FLAG，主循环会继续发 C。
+
+2.8  Core/Src/main.c 的无效代码
+     uint32_t wdata[1024];  (白占 4KB RAM)
+     uint8_t rbuff[256];  uint8_t ret;
+     extern uint8_t U0CB_U0_RxBuff[U0_RX_SIZE];  (名字和 my_uart.c 里的
+     定义 U0_RxBuff 不一致，而且是死的)
+
+2.9  hardware/boot.c 里 typedef void (*load_a)(void); 与 boot.h 重复
+     （工程开了 uC99=1，C99 下重复 typedef 是约束违规），
+     另外还有一个没用到的全局 load_a load_A;
+
+2.10 hardware/my_uart.c 没有 #include <stdio.h>，
+     导致 vsprintf 隐式声明告警（依赖默认 int 返回值，属于隐患）。
+
+2.11 中途出现的误改：sscanf 被写成 scanf
+     scanf（读 stdin 的版本）会连带拉进 scanf_char_file.o、semi.o、
+     iusesemig.o、dfltul.o 等 stdin/半主机桩，镜像一下冲到 20KB 以上，
+     链接器直接拒绝：
+         Error: L6407E: Sections of aggregate size 0x320 bytes could not fit
+     （这反过来证明 20KB 区域限制是有效的：越界就编译失败，而不是悄悄生成
+       一个会自杀的固件。）
+
+2.12 hardware/delay.c 文件末尾缺换行（编译告警）。
+
+--------------------------------------------------------------------------------
+【第 3 类 · 必须由 A 区 App 工程配合确认（不在本工程内）】
+--------------------------------------------------------------------------------
+3.1 App 的 Options -> Target -> IROM1 必须是 Start 0x08005000 / Size 0xB000(44KB)。
+3.2 App 必须自己保证向量表偏移：
+    system_stm32f1xx.c 里打开 USER_VECT_TAB_ADDRESS 且 VECT_TAB_OFFSET=0x5000，
+    或在 main() 里执行 SCB->VTOR = 0x08005000;
+    （若 VECT_TAB_OFFSET 留 0，App 一进 SystemInit 就把 VTOR 改回 0x08000000，
+      之后 App 的所有中断都会跳进 bootloader 的向量表。）
+3.3 App 的 IRAM1 必须是 0x20000000 / 0x5000（20KB）。
+    若被设成 0x10000，App 的 __initial_sp 会 > 0x20005000，
+    跳过去第一次压栈就 HardFault —— 现象和本次完全一样。
+3.4 XMODEM 必须发 fromelf --bin 出来的原始 .bin，不能发 .hex/.axf；
+    否则写进 0x08005000 的是 ASCII 文本，向量表必然是垃圾。
+
+
+================================================================================
+二、我做了哪些修改（全部已写入源码并编译验证）
+================================================================================
+
+--------------------------------------------------------------------------------
+A. 工程设置（决定 20KB 红线）
+--------------------------------------------------------------------------------
+A1 MDK-ARM\bootloder.uvprojx
+     IROM      Size : 0x10000 -> 0x5000
+     OCR_RVCT4 Size : 0x10000 -> 0x5000
+     作用：链接器把 LR_IROM1 限制成 20KB，代码放不下时直接报
+           L6406E / L6407E，拒绝生成 axf。这正是本次事故的"总闸"。
+     说明：Target 页的 IROM1 Size 会被 Keil 按器件默认值改写，真正生效的是
+           OCR_RVCT4 + 生成的分散文件；两处现在都是 0x5000。
+A2 MDK-ARM\bootloder.uvprojx
+     <useUlib> -> 1 （Use MicroLIB）
+     作用：MicroLIB 的 printf 不含浮点/locale，省下约 2~3.5KB。
+           map 里已能看到 ../clib/microlib/... 的对象。
+A3 MDK-ARM\bootloder\bootloder.sct
+     LR_IROM1 / ER_IROM1 尺寸 0x10000 -> 0x5000
+
+--------------------------------------------------------------------------------
+B. 源码修改清单
+--------------------------------------------------------------------------------
+B1 Core\Inc\main.h
+   - 新增 STM_A_END_ADDR     (A 区最后一个字节 0x0800FFFF)
+   - 新增 STM_SRAM_BASE / STM_SRAM_END / STM_INIT_MSP_MAX (0x20005000)
+   - UP_DataA 结构体新增 uint32_t xmodem_lastblk;
+     （记录最近一个已正确存入缓冲的包号，用于识别重传包）
+
+B2 hardware\boot.c
+   - LOAD_A() 重写：MSP/PC 判据修正 + 关中断/关 SysTick/清 NVIC
+     + VTOR + DSB/ISB + 最后切栈（见第三节代码）
+   - 新增 static uint8_t BootLoader_CmdPending(uint8_t cmd)
+     菜单入口改为在 DMA+IDLE 帧队列里找 'w'
+   - 删除与 boot.h 重复的 typedef，删除无用全局 load_a load_A;
+   - 命令 4（查询版本）删除误置的 BootStaFlag |= SET_VERSION_FLAG;
+   - 命令 2 里初始化 updataA.xmodem_lastblk = 0xFFFFFFFFU;
+   - XMODEM 收包分支重写：增加 ~包号 校验、重传包只回 ACK 不重复写缓冲
+   - EOT 分支补上 BootStaFlag &= ~IAP_XMODEMC_FLAG;
+   - 新增 static uint8_t OTA_Ver_IsValid(const uint8_t *s, uint8_t len)
+     —— 用手写格式校验替代 scanf/sscanf（省掉整条 scanf 链约 1.4KB）
+   - 删除只被上面那个 scanf 用到的 int temp;
+
+B3 hardware\fmc.c
+   - STM32_EraseFlash()：入口增加范围保护
+       if ((num == 0U) || (start < STM_A_PAGE) ||
+           (((uint32_t)start + (uint32_t)num) > STM_PAGE_NUM))  -> 打印错误并返回
+     页大小硬编码 * 1024 改为 * STM_PAGE_SIZE
+   - 精简调试打印：删掉 "Stop UART DMA"/"UART STOP OK"/"BEFORE HAL ERASE"/
+     "AFTER HAL ERASE"/"FlashError"(含 HAL_FLASH_GetError)，
+     合并为一条 "Erase ret=%d pageErr=0x%08X"
+   - STM32_WriteFlash()：wnum 必须是 4 的倍数；增加 A 区地址保护；
+     ret 初始化为 HAL_OK；写失败立即 break；统一在末尾报错
+
+B4 hardware\my_uart.h
+   - uint8_t URxcounter  ->  uint16_t URxcounter
+
+B5 hardware\my_uart.c
+   - 增加 #include <stdio.h>
+
+B6 Core\Src\stm32f1xx_it.c
+   - IDLE 分支先算 recv_len = U0_RX_MAX+1-__HAL_DMA_GET_COUNTER(...)
+     并用 if(recv_len > 0) 包住指针更新（防止下标 -1）
+   - 剩余空间判断 U0_RX_MAX -> U0_RX_MAX+1（与 DMA 长度一致，防止越界 1 字节）
+
+B7 Core\Src\main.c
+   - 'C' 轮询改为 HAL_GetTick() 计时 100ms，且只在 xmodem_NB==0（还没收到
+     任何包）时发送
+   - 删除未使用的 wdata[1024] / rbuff / ret / 错误的 extern U0CB_U0_RxBuff
+
+B8 hardware\delay.c
+   - 文件末尾补换行，消除编译告警
+
+
+================================================================================
+三、修改后的关键代码逻辑
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1 LOAD_A()  —— 硬件无关检查在前，关中断 → 换向量表 → 切栈 → 跳转
+--------------------------------------------------------------------------------
+void LOAD_A(uint32_t addr)
+{
+    uint32_t app_msp;
+    uint32_t app_pc;
+    load_a   app_entry;
+
+    app_msp = *(volatile uint32_t *)addr;          /* 向量表第 1 个字 = 初始 MSP */
+    app_pc  = *(volatile uint32_t *)(addr + 4);    /* 第 2 个字 = 复位入口 PC  */
+
+    u0_printf("APP ADDR = 0x%08X\r\n", addr);
+    u0_printf("APP MSP  = 0x%08X\r\n", app_msp);
+    u0_printf("APP PC   = 0x%08X\r\n", app_pc);
+
+    /* MSP：20KB SRAM => 0x20000000~0x20004FFF；
+       初始栈顶 = RAM 末尾+1，所以 0x20005000 合法；必须 8 字节对齐 */
+    if ((app_msp < 0x20000100U) ||
+        (app_msp > STM_INIT_MSP_MAX) ||            /* 0x20005000 */
+        ((app_msp & 0x07U) != 0U))
+    {
+        u0_printf("APP MSP ERROR\r\n");
+        return;
+    }
+
+    /* 复位入口：必须在 A 区内，且 bit0=1（Thumb） */
+    if ((app_pc < STM_A_ADDR) ||                   /* 0x08005000 */
+        (app_pc > STM_A_END_ADDR) ||               /* 0x0800FFFF */
+        ((app_pc & 0x01U) == 0U))
+    {
+        u0_printf("APP PC ERROR\r\n");
+        return;
+    }
+
+    app_entry = (load_a)app_pc;
+
+    /* 1) 关掉 bootloader 的一切中断源并清挂起标志（关键：不能再把
+          中断开在切栈之前） */
+    __disable_irq();
+    HAL_SuspendTick();                 /* 关 HAL 的 1ms SysTick 中断 */
+    SysTick->CTRL = 0U;
+    SysTick->LOAD = 0U;
+    SysTick->VAL  = 0U;
+    NVIC->ICER[0] = 0xFFFFFFFFU;       /* F103C8 的 IRQ 全在 ICER[0] 内 */
+    NVIC->ICPR[0] = 0xFFFFFFFFU;       /* 清掉所有已挂起标志 */
+
+    /* 2) 释放 bootloader 占用的外设（串口/DMA/GPIO） */
+    BootLoader_Clear();                /* 内部只 __disable_irq，不开中断 */
+
+    /* 3) 向量表重定位到 A 区并立即生效 */
+    SCB->VTOR = addr;
+    __DSB();
+    __ISB();
+
+    /* 4) 最后一步才切栈，切完立刻跳转 */
+    __set_MSP(app_msp);
+    __DSB();
+    __ISB();
+
+    app_entry();                       /* 进入 A 区 Reset_Handler，不返回 */
+
+    while (1) { }
+}
+
+关键点：
+  * 顺序必须是  关中断 -> 复位外设 -> 设 VTOR -> 设 MSP -> 跳转；
+  * 绝不能出现 __enable_irq()（复位后 App 的 PRIMASK 本来就是 0，
+    App 自己会开中断）；
+  * VTOR/MSP 之后各加 DSB+ISB，保证对后续取指立即可见。
+
+--------------------------------------------------------------------------------
+3.2 XMODEM 收包（hardware/boot.c）
+--------------------------------------------------------------------------------
+if(datalen == 133 && data[0]==0x01)
+{
+    uint8_t  blk = data[1];                    /* 包号 */
+    uint16_t crc;
+
+    if(data[2] != (uint8_t)(~blk))
+    {   /* 包号取反字节不合法 -> NAK 让主机重发 */
+        ack=0x15;  HAL_UART_Transmit(&huart1,&ack,1,100);
+    }
+    else if((uint32_t)blk == updataA.xmodem_lastblk)
+    {   /* 重传包（上次 ACK 丢了）：只回 ACK，绝不再写一次缓冲，
+           否则 xmodem_NB 多加 1，后面所有数据整体错位一个包 */
+        ack=0x06;  HAL_UART_Transmit(&huart1,&ack,1,100);
+    }
+    else
+    {
+        crc = Xmodem_CRC16(&data[3],128);
+        if(crc == ((data[131]<<8)|data[132]))
+        {
+            memcpy(&updataA.updatabuff[(updataA.xmodem_NB%(STM_PAGE_SIZE/128))*128],
+                   &data[3],128);
+            updataA.xmodem_NB++;
+            updataA.xmodem_lastblk = (uint32_t)blk;      /* 记下包号 */
+
+            if(updataA.xmodem_NB%(STM_PAGE_SIZE/128)==0)  /* 满 1KB 写一页 */
+            {
+                STM32_WriteFlash(
+                    FLASH_BASE + (STM_A_PAGE +
+                        ((updataA.xmodem_NB/(STM_PAGE_SIZE/128))-1))*STM_PAGE_SIZE,
+                    (uint32_t*)updataA.updatabuff,
+                    STM_PAGE_SIZE);
+            }
+            ack=0x06;  HAL_UART_Transmit(&huart1,&ack,1,100);
+        }
+        else
+        {   /* CRC 错：NAK 请求重发 */
+            ack=0x15;  HAL_UART_Transmit(&huart1,&ack,1,100);
+        }
+    }
+}
+
+地址算法（未改动，经核对是正确的）：
+  第 N 个包(N 从 1 计) 落在缓冲偏移 (N-1)%8*128；
+  每满 8 个包(1024 字节) 写入 Flash 页 STM_A_PAGE + N/8 - 1；
+  EOT 时剩余 (N%8)*128 字节写到页 STM_A_PAGE + N/8。
+  => 第 1 页正好是 0x08005000，与 STM_A_ADDR 一致。
+
+--------------------------------------------------------------------------------
+3.3 擦除保护（hardware/fmc.c）
+--------------------------------------------------------------------------------
+void STM32_EraseFlash(uint16_t start, uint16_t num)
+{
+    ...
+    /* 只允许擦 A 区，绝不允许擦到 bootloader 自己 */
+    if ((num == 0U) ||
+        (start < STM_A_PAGE) ||                                  /* 20 */
+        (((uint32_t)start + (uint32_t)num) > STM_PAGE_NUM))       /* 64 */
+    {
+        u0_printf("Erase range error! start=%d num=%d\r\n", start, num);
+        return;
+    }
+    ...
+}
+
+--------------------------------------------------------------------------------
+3.4 写入保护 + 计数器修正（hardware/fmc.c）
+--------------------------------------------------------------------------------
+void STM32_WriteFlash(uint32_t saddr, uint32_t *wdata, uint32_t wnum)
+{
+    HAL_StatusTypeDef ret = HAL_OK;
+
+    if ((wnum == 0U) || ((wnum & 0x03U) != 0U))      /* 必须是 4 的倍数 */
+    {
+        u0_printf("flash write len error\r\n");
+        return;                                      /* 否则原来会 uint32 下溢 */
+    }
+
+    if ((saddr < STM_A_ADDR) || ((saddr + wnum - 1U) > STM_A_END_ADDR))
+    {
+        u0_printf("flash write addr error 0x%08X\r\n", saddr);
+        return;                                      /* 禁止写到 bootloader 身上 */
+    }
+
+    HAL_FLASH_Unlock();
+    while(wnum > 0U)
+    {
+        ret = HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, saddr, *wdata);
+        if (ret != HAL_OK) break;                    /* 出错立即停 */
+        wnum  -= 4U;
+        saddr += 4U;
+        wdata++;
+    }
+    HAL_FLASH_Lock();
+
+    if(ret != HAL_OK) u0_printf("flash write error\r\n");
+}
+
+--------------------------------------------------------------------------------
+3.5 "C" 轮询（Core/Src/main.c）
+--------------------------------------------------------------------------------
+if((BootStaFlag & IAP_XMODEMC_FLAG) && (updataA.xmodem_NB == 0U))
+{
+    /* 真实 100ms（原来是数 100 次主循环 ≈ 1 秒）；
+       且只在还没收到任何包时发 C —— 标准 XMODEM 里 C 只用于等待
+       主机开始发送，传输途中插 C 会被部分发送端当成异常而触发重传 */
+    if((HAL_GetTick() - updataA.xmodem_timer) >= 100U)
+    {
+        updataA.xmodem_timer = HAL_GetTick();
+        u0_printf("C");
+    }
+}
+
+--------------------------------------------------------------------------------
+3.6 菜单入口（hardware/boot.c）
+--------------------------------------------------------------------------------
+static uint8_t BootLoader_CmdPending(uint8_t cmd)
+{
+    /* 在 DMA+IDLE 帧队列里逐帧查找；找到返回 1，并把检查过的帧出队。
+       不能再用 U0_RxBuff[0]：那个字节只在"复位后第一个字节恰好是 w"时有效 */
+    while (U0CB.OUT != U0CB.IN)
+    {
+        uint8_t i;
+        uint8_t len = (uint8_t)(U0CB.OUT->end - U0CB.OUT->star + 1U);
+        for (i = 0; i < len; i++)
+            if (U0CB.OUT->star[i] == cmd) return 1;
+        U0CB.OUT++;
+        if (U0CB.OUT == U0CB.END) U0CB.OUT = &U0CB.URxDataPtr[0];
+    }
+    return 0;
+}
+...  BootLoader_Enter() 里:  if(BootLoader_CmdPending('w') != 0U) return 1;
+
+--------------------------------------------------------------------------------
+3.7 版本号格式校验（替代 scanf，hardware/boot.c）
+--------------------------------------------------------------------------------
+static uint8_t OTA_Ver_IsValid(const uint8_t *s, uint8_t len)
+{
+    /* 校验 VER-x.y.z-y/m/d-h:m 共 26 字节，分隔符位置固定 */
+    uint8_t i = 4U, f, digits;
+    const char sep[7] = {'.', '.', '-', '/', '/', '-', ':'};
+
+    if (len != 26U) return 0U;
+    if ((s[0]!='V')||(s[1]!='E')||(s[2]!='R')||(s[3]!='-')) return 0U;
+
+    for (f = 0U; f < 7U; f++)
+    {
+        digits = 0U;
+        while ((i < len) && (s[i] >= '0') && (s[i] <= '9')) { i++; digits++; }
+        if (digits == 0U) return 0U;
+        if ((i >= len) || (s[i] != (uint8_t)sep[f])) return 0U;
+        i++;
+    }
+    digits = 0U;
+    while ((i < len) && (s[i] >= '0') && (s[i] <= '9')) { i++; digits++; }
+    if ((digits == 0U) || (i != len)) return 0U;
+    return 1U;
+}
+调用处： if(datalen == 26){ if(OTA_Ver_IsValid(data, 26U)){ ...写 EEPROM... } }
+
+
+================================================================================
+四、验证结果（用你本机 Keil：UV4 + ARMCC V5.06 update 7 实测）
+================================================================================
+Rebuild target 'bootloder'
+    最后一次 UV4 完整构建:  "bootloder.axf" - 0 Error(s), 2 Warning(s)
+    （那 2 条告警随后已在源码中消除：my_uart.c 补 #include <stdio.h>、
+      delay.c 补文件末尾换行；并用 armcc 单独编译复核为 0 warning，
+      所以下一次在 Keil 里构建即为 0 Error / 0 Warning。）
+
+Load Region LR_IROM1  Base 0x08000000  Size 0x00004658  Max 0x00005000
+Total RO  Size (Code + RO Data)            17980 (17.56 kB)
+Total RW  Size (RW Data + ZI Data)          4904 ( 4.79 kB)
+Total ROM Size (Code + RO Data + RW Data)  18008 (17.59 kB)
+镜像最高地址 0x08004657，越过 0x08005000 的记录数 = 0
+
+关键函数落点（全部 < 0x08005000）：
+    0x08002645  LOAD_A              0x08002AE5  STM32_EraseFlash
+    0x08002C65  STM32_WriteFlash    0x08003581  Xmodem_CRC16
+    0x08003F15  bootloder_Brance    0x08003FC5  bootloder_Event
+    0x08004331  main                0x08004589  u0_printf
+当前 C 库：MicroLIB（map 中出现 ../clib/microlib/...，已无浮点 printf）
+
+体积对比：
+    修改前(故障版)  Total ROM 23028 (22.49 kB)  <- 越界 2548 字节
+    第一轮修复后    Total ROM 19440 (18.98 kB)  <- 仍用标准库、还带浮点 printf
+    最终            Total ROM 18008 (17.59 kB)  <- MicroLIB + 去掉 scanf 链
+    余量            20480 - 18008 = 2472 字节
+
+20KB 红线的有效性已被实测证明：中途代码超限时链接器直接报
+    Error: L6406E / L6407E  ->  "Target not created"
+即"能编译通过"就等于"bootloader 没有越界"。
+
+
+================================================================================
+五、操作清单与注意事项
+================================================================================
+1. 先关掉 Keil -> 重新打开工程（让所有源码改动生效）-> Rebuild。
+   期望：0 Error(s) 0 Warning(s)，Total ROM Size ≈ 18008。
+2. 在 Options for Target -> Target 页确认一次：
+     - IROM1  Start 0x08000000  Size 0x5000
+     - 勾选 Use MicroLIB
+   （Keil 会用器件默认值改写 IROM1 Size，真正生效的是分散文件；只要编译能过
+     就说明区域没被撑破。任何时候链接报 L6406E/L6407E，都表示代码超了 20KB，
+     正确做法是精简代码，绝对不要放大这个区域限制。）
+3. 烧写 MDK-ARM\bootloder\bootloder.hex（已编译好的修复版）。
+4. 串口按 2 -> 用 XMODEM 发送 App 的 .bin（必须是 fromelf --bin 的原始二进制）。
+   期望看到：Erase start -> Erase ret=0 pageErr=0x00000000 -> Erase OK
+             -> 逐包 ACK(06) -> EOT 后自动复位。
+5. 复位后看串口打印：
+     A[0] / A[1] / APP ADDR / APP MSP / APP PC
+   正确判据（三条都要满足）：
+     - A[0] ∈ [0x20000000, 0x20005000] 且低 3 位为 0（8 字节对齐）
+     - A[1] ∈ [0x08005000, 0x0800FFFF] 且是奇数（Thumb 位）
+     - 与 App 工程 .map 里的 __initial_sp、Reset_Handler(值减 1) 完全一致
+   若 A[0]/A[1] = 0xFFFFFFFF = 擦过没写进去；
+   若是 0x49061D00/0xBF006008 这类连续代码字 = 那里还是 bootloader。
+6. 若跳转仍失败，请提供：
+     - 串口完整日志（含 APP ADDR/MSP/PC 三行）
+     - 调试器里跳转瞬间的 MSP / SCB->VTOR / PC
+     - HardFault 后的 SCB->CFSR(0xE000ED28) / HFSR(0xE000ED2C) / BFAR(0xE000ED38)
+7. A 区 App 侧仍需你确认（本工程无法代改）：
+     - IROM1 = 0x08005000 / Size 0xB000(44KB)
+     - IRAM1 = 0x20000000 / Size 0x5000(20KB)   <== 重点怀疑项
+     - USER_VECT_TAB_ADDRESS + VECT_TAB_OFFSET = 0x5000，或 main() 里
+       SCB->VTOR = 0x08005000;
+     - 发送的是 .bin
+8. 备份文件：工程根目录的 bootloder.hex.round1_19440B / bootloder.map.round1_19440B
+   是第一轮修复后（19440B）的构建产物，仅作对照，确认无误后可删除。
+
+
+================================================================================
+六、附：本次故障的因果图
+================================================================================
+  IROM1 Size = 0x10000（无边界）
+            |
+            v
+  bootloader 镜像 23028B 越界到 0x08005000~0x080059F3
+            |
+            +--> 0x08005000 处是代码字 0x49061D00，不是向量表
+            |         |
+            |         +--> APP MSP 检查失败 / 强行跳转 HardFault
+            |
+            +--> 按 2 擦除 A 区(第20~63页) = 擦掉正在运行的
+                 bootloder_Event / main / u0_printf
+                      |
+                      +--> 擦除后返回即执行 0xFFFFFFFF -> HardFault
+                      +--> XMODEM 每 1KB 覆盖 bootloader 自己 -> 下载不可能完整
+
+  叠加缺陷（各自都能独立造成故障）：
+    MSP 判据 > 0x20004FFF 误杀合法值 0x20005000
+    跳转顺序 __enable_irq() 在 __set_MSP() 之前 + SysTick 未关
+    擦写无地址保护 + WriteFlash 计数器下溢
+    接收计数 uint8_t 截断 / XMODEM 重传包重复写入 / scanf 误用导致超限
+
+================================================================================
+七、后续更新记录
+================================================================================
+[2026-10-13] 补充实现菜单功能 5 / 6（外部 Flash 暂存 + 回搬 A 区）
+
+  源码改动：
+    hardware/boot.c  新增 static W25Q64_Write1K()：1KB 缓冲按 256B 页拆 4 页写；
+                     新增 BootLoader_UpdateAFromW25Q64()：验向量表 -> 擦 A 区
+                       -> 1KB 一块搬迁 + 回读校验 -> 清标记 -> 跳转；
+                     bootloder_Event() 增加命令 '5' / '6' 分支；
+                     XMODEM 的"满 1KB 落盘"与 EOT 收尾按 CMD5_XMODEM_FLAG 分叉
+                       （未置位=写内部 A 区，置位=写外部 W25Q64）。
+    hardware/boot.h  导出 BootLoader_UpdateAFromW25Q64()。
+    Core/Inc/main.h  新增 STM_A_SIZE / W25Q64_BLOCK_SIZE / FW_STORE_BLOCK /
+                     FW_MAX_SIZE，并给 CMD5_XMODEM_FLAG 补注释。
+    Core/Src/main.c  主循环补全 UPDATA_A_FLAG 分支（上电自动升级路径）。
+
+  工程设置改动（重要）：
+    MDK-ARM/bootloder.uvprojx  <Optim> 1 -> 2，即 C 优化等级 Level 0(-O0)
+    -> Level 1(-O1)。
+
+  为什么必须动优化等级：
+    加上功能 5/6 后镜像从 18008 B 涨到 20988 B（超 20KB 共 508 B，链接报
+    L6406E/L6407E）。多出的 2980 B 主要来自：HAL SPI 状态机(~1030B，之前从未
+    被调用)、W25Q64 驱动(~378B)、新增函数本体(~290B)、以及调试字符串。
+    处理办法：精简新功能的调试打印（17 条 -> 9 条并缩短），并把优化等级提到
+    -O1，最终镜像 17992 B，余量 2488 B。
+    -O1 对本工程是安全的：唯一时序敏感的是软件 I2C，而其延时全部来自
+    delay_us()（内部读 volatile 的 SysTick->VAL），不会被优化掉。
+
+  改动后的实测：
+    Keil 全量重建 -> 0 Error / 0 Warning
+    Load Region LR_IROM1  Base 0x08000000  Size 0x4648  Max 0x5000
+    Total ROM Size  17992 (17.57 kB)     镜像最高地址 0x08004647
+    W25Q64_Write1K 48B   BootLoader_UpdateAFromW25Q64 242B
+    bootloder_Event 760B   LOAD_A 140B   main 214B
+
+  详细设计与"为什么这样写"见同目录：OTA_功能5和6_设计与实现思路.md
+
+================================================================================
+                                （文档结束）
+================================================================================

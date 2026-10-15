@@ -1,0 +1,41 @@
+# ===== Keil MDK 构建输出 =====
+MDK-ARM/bootloder/
+MDK-ARM/Listings/
+MDK-ARM/Objects/
+MDK-ARM/RTE/
+MDK-ARM/DebugConfig/
+*.uvguix.*
+*.uvoptx
+*.scvd
+*.lst
+
+# 编译中间产物
+*.o
+*.d
+*.crf
+*.lnp
+*.axf
+*.htm
+*.dep
+*.iex
+*.bak
+*.fed
+*.lnp
+
+# ===== IAR =====
+EWARM/Debug/
+EWARM/settings/
+EWARM/*.dep
+
+# ===== 日志/临时 =====
+*.log
+JLinkLog.txt
+*.ini
+
+# ===== 本地工具/记忆目录 =====
+.workbuddy/
+.zcode/
+
+# ===== 系统 =====
+Thumbs.db
+Desktop.ini
