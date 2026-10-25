@@ -1,0 +1,30 @@
+{
+  "files.encoding": "utf8",
+
+  // 构建产物不进搜索/不被监视，VS Code 更快
+  "search.exclude": {
+    "**/MDK-ARM/bootloder": true,
+    "**/EWARM/Debug": true,
+    "**/.git": true,
+    "**/*.o": true,
+    "**/*.axf": true
+  },
+  "files.watcherExclude": {
+    "**/MDK-ARM/bootloder/**": true,
+    "**/EWARM/Debug/**": true
+  },
+
+  // Cortex-Debug 需要的工具路径（本机实际位置；换机器请改这里或 scripts/tools.ps1）
+  "cortex-debug.openocdPath": "D:/BaiduNetdiskDownload/freertos_cubide/software/STM32CubeIDE_1.19.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.openocd.win32_2.4.200.202505051030/tools/bin/openocd.exe",
+  "cortex-debug.gdbPath": "D:/BaiduNetdiskDownload/freertos_cubide/software/STM32CubeIDE_1.19.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.13.3.rel1.win32_1.0.0.202411081344/tools/bin/arm-none-eabi-gdb.exe",
+  "cortex-debug.armToolchainPath": "D:/BaiduNetdiskDownload/freertos_cubide/software/STM32CubeIDE_1.19.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.13.3.rel1.win32_1.0.0.202411081344/tools/bin",
+
+  // Git
+  "git.autofetch": true,
+  "git.enableSmartCommit": false,
+  "git.confirmEmptyCommits": false,
+
+  // 杂项
+  "[markdown]": { "editor.wordWrap": "on" },
+  "files.trimTrailingWhitespace": false
+}

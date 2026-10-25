@@ -1,0 +1,33 @@
+{
+  // 让 VS Code 的 C/C++ 智能提示认识 HAL 库、CMSIS 和本工程的宏
+  // （只影响编辑体验与跳转，不影响 Keil 的真实编译）
+  "version": 4,
+  "configurations": [
+    {
+      "name": "STM32F103C8 (Keil + HAL)",
+      "includePath": [
+        "${workspaceFolder}/Core/Inc",
+        "${workspaceFolder}/hardware",
+        "${workspaceFolder}/Drivers/STM32F1xx_HAL_Driver/Inc",
+        "${workspaceFolder}/Drivers/STM32F1xx_HAL_Driver/Inc/Legacy",
+        "${workspaceFolder}/Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+        "${workspaceFolder}/Drivers/CMSIS/Include"
+      ],
+      "defines": [
+        "USE_HAL_DRIVER",
+        "STM32F103xB",
+        "__MICROLIB"
+      ],
+      "cStandard": "c99",
+      "intelliSenseMode": "gcc-arm",
+      "browse": {
+        "path": [
+          "${workspaceFolder}/Core/Inc",
+          "${workspaceFolder}/hardware",
+          "${workspaceFolder}/Drivers"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      }
+    }
+  ]
+}

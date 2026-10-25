@@ -3,8 +3,8 @@
 
 #include "stm32f1xx_hal.h"
 
-#define U0_RX_SIZE  2048
-#define U0_RX_MAX  256
+#define U0_RX_SIZE  2048	//最多积压多少数据”的水池（8 页余量）
+#define U0_RX_MAX  256   //单帧上限
 #define NUM 10
 
 typedef struct{

@@ -1,0 +1,54 @@
+{
+  // 需要扩展 marus25.cortex-debug（已装）
+  // 调试链路：VS Code → arm-none-eabi-gdb → (OpenOCD + ST-Link) → 芯片
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "cortex-debug",
+      "request": "launch",
+      "name": "调试 (OpenOCD + ST-Link)",
+      "servertype": "openocd",
+      "cwd": "${workspaceFolder}",
+      "executable": "${workspaceFolder}/MDK-ARM/bootloder/bootloder.axf",
+      "configFiles": [
+        "interface/stlink.cfg",
+        "target/stm32f1x.cfg"
+      ],
+      "searchDir": [
+        "D:/BaiduNetdiskDownload/freertos_cubide/software/STM32CubeIDE_1.19.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.debug.openocd_2.3.100.202501240831/resources/openocd/st_scripts"
+      ],
+      "serverpath": "D:/BaiduNetdiskDownload/freertos_cubide/software/STM32CubeIDE_1.19.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.openocd.win32_2.4.200.202505051030/tools/bin/openocd.exe",
+      "armToolchainPath": "D:/BaiduNetdiskDownload/freertos_cubide/software/STM32CubeIDE_1.19.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.13.3.rel1.win32_1.0.0.202411081344/tools/bin",
+      "gdbPath": "D:/BaiduNetdiskDownload/freertos_cubide/software/STM32CubeIDE_1.19.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.13.3.rel1.win32_1.0.0.202411081344/tools/bin/arm-none-eabi-gdb.exe",
+      "device": "STM32F103C8",
+      "svdFile": "D:/BaiduNetdiskDownload/yehuoxiaozhi_hal/keil5-path/pack/Keil/STM32F1xx_DFP/2.3.0/SVD/STM32F103xx.svd",
+      "runToEntryPoint": "main",
+      "preLaunchTask": "build (Keil 增量)",
+      "showDevDebugOutput": "none",
+      "preLaunchCommands": [
+        "monitor reset halt"
+      ]
+    },
+    {
+      "type": "cortex-debug",
+      "request": "attach",
+      "name": "附加到正在运行的芯片 (attach)",
+      "servertype": "openocd",
+      "cwd": "${workspaceFolder}",
+      "executable": "${workspaceFolder}/MDK-ARM/bootloder/bootloder.axf",
+      "configFiles": [
+        "interface/stlink.cfg",
+        "target/stm32f1x.cfg"
+      ],
+      "searchDir": [
+        "D:/BaiduNetdiskDownload/freertos_cubide/software/STM32CubeIDE_1.19.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.debug.openocd_2.3.100.202501240831/resources/openocd/st_scripts"
+      ],
+      "serverpath": "D:/BaiduNetdiskDownload/freertos_cubide/software/STM32CubeIDE_1.19.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.openocd.win32_2.4.200.202505051030/tools/bin/openocd.exe",
+      "armToolchainPath": "D:/BaiduNetdiskDownload/freertos_cubide/software/STM32CubeIDE_1.19.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.13.3.rel1.win32_1.0.0.202411081344/tools/bin",
+      "gdbPath": "D:/BaiduNetdiskDownload/freertos_cubide/software/STM32CubeIDE_1.19.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.13.3.rel1.win32_1.0.0.202411081344/tools/bin/arm-none-eabi-gdb.exe",
+      "device": "STM32F103C8",
+      "svdFile": "D:/BaiduNetdiskDownload/yehuoxiaozhi_hal/keil5-path/pack/Keil/STM32F1xx_DFP/2.3.0/SVD/STM32F103xx.svd",
+      "showDevDebugOutput": "none"
+    }
+  ]
+}

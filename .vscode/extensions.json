@@ -1,0 +1,11 @@
+{
+  // 打开本工程时 VS Code 会提示安装这些扩展
+  "recommendations": [
+    "ms-vscode.cpptools",              // C/C++ 智能提示、跳转
+    "marus25.cortex-debug",            // ARM Cortex-M 调试（配合 OpenOCD + gdb）
+    "mcu-debug.peripheral-viewer",     // 外设寄存器（配合 SVD）
+    "mcu-debug.memory-view",           // 内存视图
+    "ms-vscode.vscode-serial-monitor"  // 串口监视器（看 921600 的调试输出）
+  ],
+  "unwantedRecommendations": []
+}

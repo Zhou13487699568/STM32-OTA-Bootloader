@@ -1,0 +1,14 @@
+# 二进制文件不要做行尾转换，否则 .hex/.bin 会被改坏
+*.hex   -text
+*.bin   -text
+*.axf   -text
+*.o     -text
+*.a     -text
+*.lib   -text
+*.svd   -text
+
+# 脚本统一按文本处理
+*.ps1   text
+*.s     text
+*.c     text
+*.h     text

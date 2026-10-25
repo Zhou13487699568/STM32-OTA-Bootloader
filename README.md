@@ -123,6 +123,29 @@ OneNET/服务器 ──MQTT/透传──► 4G Air780E ──UART──► A 区
 - **APP 工程**：IROM 起始地址设为 `0x08005000`、大小 44KB，并将 `VECT_TAB_OFFSET` 配置为 `0x5000`；在应用内触发升级时按契约写 W25Q64 与 M24C02 后调用 `NVIC_SystemReset()`。
 - 自定义跳转 `LOAD_A()`：设置 MSP → 取复位向量 → 跳转，跳转前将 B 区用到的外设寄存器复位。
 
+## 在 VS Code 中开发（编译 / 烧写 / 调试 / Git）
+
+仓库已经配置好 `.vscode/`，用 VS Code 打开本文件夹即可，**不需要把工程转成 CMake/GCC** —— 编译仍然走 Keil 的 armcc，保证和你在 Keil 里看到的产物完全一致（17992 B / 20KB）。
+
+| 操作 | 方式 |
+|---|---|
+| **编译** | `Ctrl+Shift+B`（默认任务 = Keil 增量编译），终端会打印 Flash/RAM 占用与余量；armcc 的告警/错误会出现在「问题」面板并可点击跳转 |
+| **全量重编** | 终端 → 运行任务 → `rebuild (Keil 全量)`（改过 `.uvprojx` / `.sct` / 优化等级后用这个） |
+| **烧写** | 终端 → 运行任务 → `flash (ST-Link)`，或 `build + flash` 一步到位 |
+| **调试** | `F5` → `调试 (OpenOCD + ST-Link)`：断点、单步、变量、调用栈，并在「外设」面板里看 RCC/GPIO/FLASH 等寄存器（已挂 SVD） |
+| **串口输出** | 装了 `Serial Monitor` 扩展：状态栏选 COM 口，波特率 **921600** |
+| **Git 同步** | 左侧「源代码管理」面板，或运行任务 `git: 同步 (pull --rebase 然后 push)` |
+
+工具链来源（本机已自动探测，缺失项会在任务里红字提示）：
+
+- **编译**：Keil uVision `UV4.exe`（`D:\BaiduNetdiskDownload\yehuoxiaozhi_hal\keil5-path\core\UV4\`）
+- **烧写**：`STM32_Programmer_CLI.exe`（ST-Link）
+- **调试**：`openocd.exe` + `arm-none-eabi-gdb.exe`（都来自本机 STM32CubeIDE 1.19 的插件目录）
+- **寄存器**：`STM32F103xx.svd`（来自 Keil 的 STM32F1xx_DFP 2.3.0）
+
+> **换机器时只需要改三处**：`scripts/tools.ps1`（所有工具路径的唯一来源）、`.vscode/settings.json` 与 `.vscode/launch.json` 里的 `cortex-debug.*` 绝对路径。
+> 另外 `git` 若不在此电脑的 PATH 中，VS Code 的源代码管理会提示找不到 git —— 本机已把 `D:\BaiduNetdiskDownload\ai\git\Git\cmd` 加入用户 PATH（重启 VS Code 生效）。
+
 ## Roadmap
 
 - [ ] A 区示例 APP：接入 Air780E AT 驱动 + OneNET MQTT，实现版本比对与分片下载

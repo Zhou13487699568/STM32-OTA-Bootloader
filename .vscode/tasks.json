@@ -1,0 +1,96 @@
+{
+  // 在 VS Code 里按 Ctrl+Shift+B 直接编译；所有任务都在「终端 → 运行任务」里可选
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build (Keil 增量)",
+      "detail": "调用 Keil UV4 增量编译，并读取 map 显示 Flash 占用",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/build.ps1"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": [
+        {
+          "owner": "armcc",
+          "source": "armcc",
+          // armcc 报错形如： ..\hardware\boot.c(431): warning:  #223-D: xxx
+          // 路径是相对 MDK-ARM 的，所以 base 指向 MDK-ARM
+          "fileLocation": ["relative", "${workspaceFolder}/MDK-ARM"],
+          "pattern": {
+            "regexp": "^(.*)\\((\\d+)\\):\\s+(warning|error):\\s+(?:#\\d+-D:\\s+)?(.*)$",
+            "file": 1,
+            "line": 2,
+            "severity": 3,
+            "message": 4
+          }
+        }
+      ]
+    },
+    {
+      "label": "rebuild (Keil 全量)",
+      "detail": "全量重编（改了工程设置或 .sct 后用这个）",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/build.ps1", "-Rebuild"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "clean",
+      "detail": "删除 .o/.axf/.hex/.map 等构建产物",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/build.ps1", "-Clean"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "flash (ST-Link)",
+      "detail": "把 bootloder.hex 烧进芯片（不动 A 区）",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/flash.ps1"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "build + flash",
+      "detail": "先编译再烧写（日常最常用）",
+      "dependsOrder": "sequence",
+      "dependsOn": ["build (Keil 增量)", "flash (ST-Link)"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "flash + 全片擦除",
+      "detail": "先整片擦除再烧写（A 区也会被擦掉，慎用）",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/flash.ps1", "-Erase"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "git: 同步 (pull --rebase 然后 push)",
+      "detail": "先拉取远端（rebase + autostash），成功后推送本地提交",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+        "git pull --rebase --autostash origin main; if ($LASTEXITCODE -eq 0) { git push origin main } else { Write-Host '× pull 失败，已停止（请先解决冲突）' -ForegroundColor Red; exit 1 }"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "git: 状态",
+      "type": "process",
+      "command": "git",
+      "args": ["status", "--short", "--branch"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    }
+  ]
+}
