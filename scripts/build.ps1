@@ -54,7 +54,8 @@ if ($logText) {
 }
 
 # ---------- 结果 ----------
-$ok = ($p.ExitCode -eq 0)
+# UV4 的退出码：0 = 无错无警告，1 = 只有警告（编译仍然成功），2 = 有错误
+$ok = ($p.ExitCode -le 1)
 $errCount = ([regex]::Matches($logText, '(\d+) Error\(s\)') | ForEach-Object { [int]$_.Groups[1].Value } | Select-Object -Last 1)
 $warnCount = ([regex]::Matches($logText, '(\d+) Warning\(s\)') | ForEach-Object { [int]$_.Groups[1].Value } | Select-Object -Last 1)
 

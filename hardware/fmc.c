@@ -17,11 +17,11 @@ void STM32_EraseFlash(uint16_t start, uint16_t num)
         (start < STM_A_PAGE) ||
         (((uint32_t)start + (uint32_t)num) > STM_PAGE_NUM))
     {
-        u0_printf("Erase range error! start=%d num=%d\r\n", start, num);
+        u0_printf("擦除范围非法：起始页=%d 页数=%d\r\n", start, num);
         return;
     }
 
-    u0_printf("Erase start: 0x%08X, pages=%d\r\n",
+    u0_printf("开始擦除：地址 0x%08X，共 %d 页\r\n",
               FLASH_BASE + (uint32_t)start * STM_PAGE_SIZE,
               num);
 
@@ -46,7 +46,7 @@ void STM32_EraseFlash(uint16_t start, uint16_t num)
 
     ret = HAL_FLASHEx_Erase(&erase_cfg, &page_err);
 
-    u0_printf("Erase ret=%d pageErr=0x%08X\r\n", ret, page_err);
+    u0_printf("擦除返回=%d，出错页=0x%08X\r\n", ret, page_err);
 
     HAL_FLASH_Lock();
 
@@ -60,12 +60,12 @@ void STM32_EraseFlash(uint16_t start, uint16_t num)
         U0_RX_MAX + 1
     );
 
-    u0_printf("UART RESUME OK\r\n");
+    u0_printf("串口接收已恢复\r\n");
 
     if(ret == HAL_OK)
-        u0_printf("Erase OK\r\n");
+        u0_printf("擦除成功\r\n");
     else
-        u0_printf("Erase ERROR\r\n");
+        u0_printf("擦除失败！\r\n");
 }
 
 /* saddr: 目标地址（必须 4 字节对齐且在 A 区内）
@@ -79,14 +79,14 @@ void STM32_WriteFlash(uint32_t saddr, uint32_t *wdata, uint32_t wnum)
 
     if ((wnum == 0U) || ((wnum & 0x03U) != 0U))
     {
-        u0_printf("flash write len error\r\n");
+        u0_printf("写入长度非法（必须是 4 的倍数）\r\n");
         return;
     }
 
     /* 地址保护：只允许写 A 区，禁止写到 bootloader 自己身上 */
     if ((saddr < STM_A_ADDR) || ((saddr + wnum - 1U) > STM_A_END_ADDR))
     {
-        u0_printf("flash write addr error 0x%08X\r\n", saddr);
+        u0_printf("写入地址非法（超出 A 区）：0x%08X\r\n", saddr);
         return;
     }
 
@@ -109,7 +109,7 @@ void STM32_WriteFlash(uint32_t saddr, uint32_t *wdata, uint32_t wnum)
 
     if(ret != HAL_OK)
     {
-        u0_printf("flash write error\r\n");
+        u0_printf("写入 Flash 失败！\r\n");
     }
 }
 

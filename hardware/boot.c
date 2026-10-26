@@ -16,19 +16,19 @@ void bootloder_Brance(void)
 	{
 	if(OTA_Info.OTA_FLAG == OTA_SET_FLAG)
 	{
-		u0_printf("OTA adpat\r\n");
+		u0_printf("检测到待升级固件，开始搬运到 A 区\r\n");
 		BootStaFlag |= UPDATA_A_FLAG;
 		updataA.w25q64_BlockNB=0;
 	}
 	else 
-	{u0_printf("no need adapt,go A\r\n");	//跳转A分区
+	{u0_printf("无待升级固件，直接跳转 A 区\r\n");	//跳转A分区
 			HAL_Delay(10);
 					LOAD_A(STM_A_ADDR);		}				
 	
 		}
 	
 
-	u0_printf("Enter bootloader command shell\r\n");
+	u0_printf("进入 Bootloader 命令行\r\n");
 	BootLoader_Info();
 
 
@@ -64,7 +64,7 @@ static uint8_t BootLoader_CmdPending(uint8_t cmd)
 }
 
 uint8_t BootLoader_Enter(uint8_t timeout) {
-    u0_printf("Press 'w' within %d ms to enter the BootLoader command line.\r\n", timeout * 100);
+    u0_printf("请在 %d 毫秒内按 w 进入 Bootloader 命令行\r\n", timeout * 100);
     while (timeout--) {
         HAL_Delay(100);
         if(BootLoader_CmdPending('w') != 0U) {
@@ -77,27 +77,27 @@ uint8_t BootLoader_Enter(uint8_t timeout) {
 
 void BootLoader_Info(void)
 {
-    u0_printf("\r\n");
+    u0_printf("\r\n===== OTA Bootloader 命令行 =====\r\n");
 
-    u0_printf("[1] Erase A Partition\r\n");
+    u0_printf("[1] 擦除 A 区（44KB）\r\n");
     // 擦除 A 分区
 
-    u0_printf("[2] UART IAP: Download to A Partition\r\n");
+    u0_printf("[2] 串口 IAP：XMODEM 下载固件到 A 区\r\n");
     // 通过串口 IAP 将程序下载到 A 分区
 
-    u0_printf("[3] Set OTA Version\r\n");
+    u0_printf("[3] 设置 OTA 版本号\r\n");
     // 设置 OTA 版本号
 
-    u0_printf("[4] Get OTA Version\r\n");
+    u0_printf("[4] 查询 OTA 版本号\r\n");
     // 查询 OTA 版本号
 
-    u0_printf("[5] Download Firmware to External Flash\r\n");
+    u0_printf("[5] 下载固件到外部 Flash（W25Q64）\r\n");
     // 将固件下载到外部 Flash
 
-    u0_printf("[6] Run Firmware from External Flash\r\n");
+    u0_printf("[6] 从外部 Flash 搬运固件并运行\r\n");
     // 从外部 Flash 运行固件
 
-    u0_printf("[7] Restart\r\n");
+    u0_printf("[7] 重启\r\n");
     // 重启系统
 }
 
@@ -125,9 +125,9 @@ void LOAD_A(uint32_t addr)
     app_msp = *(volatile uint32_t *)addr;
     app_pc  = *(volatile uint32_t *)(addr + 4);
 
-    u0_printf("APP ADDR = 0x%08X\r\n", addr);
-    u0_printf("APP MSP  = 0x%08X\r\n", app_msp);
-    u0_printf("APP PC   = 0x%08X\r\n", app_pc);
+    u0_printf("APP 起始地址 = 0x%08X\r\n", addr);
+    u0_printf("APP 主栈指针 MSP = 0x%08X\r\n", app_msp);
+    u0_printf("APP 复位入口 PC = 0x%08X\r\n", app_pc);
 
     /* MSP 合法性：C8T6 只有 20KB SRAM，范围 0x20000000~0x20004FFF。
      * 初始栈顶 = RAM 末尾 + 1，所以 0x20005000 是完全合法的值，
@@ -137,7 +137,7 @@ void LOAD_A(uint32_t addr)
         (app_msp > STM_INIT_MSP_MAX) ||
         ((app_msp & 0x07U) != 0U))
     {
-        u0_printf("APP MSP ERROR\r\n");
+        u0_printf("APP 的 MSP 非法，拒绝跳转\r\n");
         return;
     }
 
@@ -146,7 +146,7 @@ void LOAD_A(uint32_t addr)
         (app_pc > STM_A_END_ADDR) ||
         ((app_pc & 0x01U) == 0U))
     {
-        u0_printf("APP PC ERROR\r\n");
+        u0_printf("APP 的 PC 非法，拒绝跳转\r\n");
         return;
     }
 
@@ -286,12 +286,12 @@ uint8_t BootLoader_UpdateAFromW25Q64(void)
     fwbase = (uint32_t)FW_STORE_BLOCK * W25Q64_BLOCK_SIZE;
     fwlen  = OTA_Info.Firelen[FW_STORE_BLOCK];
 
-    u0_printf("Ext len=%d\r\n", fwlen);
+    u0_printf("待搬运固件长度 = %d 字节\r\n", fwlen);
 
     /* (1) 长度合法性：非 0、不超过 A 区容量、4 字节对齐 */
     if ((fwlen == 0U) || (fwlen > FW_MAX_SIZE) || ((fwlen & 0x03U) != 0U))
     {
-        u0_printf("Ext len err\r\n");
+        u0_printf("固件长度非法（需 4 字节对齐且不超过 44KB）\r\n");
         return 1U;
     }
 
@@ -299,12 +299,12 @@ uint8_t BootLoader_UpdateAFromW25Q64(void)
     W25Q64_Read(updataA.updatabuff, fwbase, 8U);
     msp = *(volatile uint32_t *)&updataA.updatabuff[0];
     pc  = *(volatile uint32_t *)&updataA.updatabuff[4];
-    u0_printf("MSP=%08X PC=%08X\r\n", msp, pc);
+    u0_printf("向量表 MSP=%08X PC=%08X\r\n", msp, pc);
 
     if ((msp < 0x20000100U) || (msp > STM_INIT_MSP_MAX) || ((msp & 0x07U) != 0U) ||
         (pc  < STM_A_ADDR)   || (pc  > STM_A_END_ADDR)   || ((pc  & 0x01U) == 0U))
     {
-        u0_printf("Bad vector, A kept\r\n");
+        u0_printf("向量表非法，保留 A 区原有程序\r\n");
         return 1U;                       /* A 区原样保留，旧程序还能跑 */
     }
 
@@ -329,7 +329,7 @@ uint8_t BootLoader_UpdateAFromW25Q64(void)
         {
             if (pflash[j] != pram[j])
             {
-                u0_printf("verify fail\r\n");    /* 写完立刻读回来比对 */
+                u0_printf("回读校验失败，已中止\r\n");    /* 写完立刻读回来比对 */
                 return 1U;
             }
         }
@@ -340,7 +340,7 @@ uint8_t BootLoader_UpdateAFromW25Q64(void)
     M24C02_WriteOTAInfo();
 
     HAL_Delay(50);
-    u0_printf("Run A\r\n");
+    u0_printf("跳转 A 区运行\r\n");
 
     LOAD_A(STM_A_ADDR);          /* 只有 A 区向量表非法时才会返回（LOAD_A 会自己报错） */
     return 1U;
@@ -358,7 +358,7 @@ void bootloder_Event(uint8_t* data, uint8_t datalen)
 
         if(datalen >= 1 && data[0]=='1')
         {
-            u0_printf("Erase A\r\n");
+            u0_printf("擦除 A 区...\r\n");
 
             STM32_EraseFlash(STM_A_PAGE, STM_A_PAGE_NUM);
         }
@@ -366,7 +366,7 @@ void bootloder_Event(uint8_t* data, uint8_t datalen)
 
         else if(datalen >= 1 && data[0]=='2')
         {
-            u0_printf("Start XMODEM download\r\n");
+            u0_printf("开始 XMODEM 下载：等出现 C 后再发送文件\r\n");
 
             //擦除APP区域
             STM32_EraseFlash(STM_A_PAGE, STM_A_PAGE_NUM);
@@ -385,18 +385,18 @@ void bootloder_Event(uint8_t* data, uint8_t datalen)
         }
     else if(datalen >=1 && data[0]=='3')
    {
-	    u0_printf("Set OTA Version\r\n");
+	    u0_printf("设置 OTA 版本号\r\n");
 	 BootStaFlag |= SET_VERSION_FLAG;
 
      }
  else if(datalen >=1 && data[0]=='4')
    {
-	    u0_printf("Check OTA Version\r\n");
+	    u0_printf("查询 OTA 版本号\r\n");
 	    /* 原来这里多了一句 BootStaFlag |= SET_VERSION_FLAG; ，
 	     * 会让"查询版本"之后收到的任意 26 字节帧被当成版本号写进 EEPROM，
 	     * 已删除：只有按 3 才进入版本设置状态。 */
 		  M24C02_ReadOTAInfo();
-		  u0_printf(" OTA Version:%s\r\n",OTA_Info.OTA_ver);
+		  u0_printf(" 当前版本：%s\r\n",OTA_Info.OTA_ver);
 		  BootLoader_Info();
 
      }
@@ -405,7 +405,7 @@ void bootloder_Event(uint8_t* data, uint8_t datalen)
             /* [5] 用 XMODEM 把固件下载到外部 Flash(W25Q64) 暂存。
              *     关键点：整个下载过程完全不碰内部 Flash，所以下载失败、
              *     断线、掉电都不会影响 A 区里正在跑的旧程序。            */
-            u0_printf("Download to W25Q64\r\n");
+            u0_printf("开始下载固件到 W25Q64：等出现 C 后再发送文件\r\n");
 
             /* 1) 复位 XMODEM 相关状态 */
             updataA.xmodem_timer   = 0;
@@ -424,19 +424,19 @@ void bootloder_Event(uint8_t* data, uint8_t datalen)
         else if(datalen >= 1 && data[0]=='6')
         {
             /* [6] 把 W25Q64 里暂存的固件搬进 A 区并运行 */
-            u0_printf("Run FW in W25Q64\r\n");
+            u0_printf("从 W25Q64 搬运固件到 A 区\r\n");
 
             if (BootLoader_UpdateAFromW25Q64() != 0U)
             {
                 /* 失败：回到菜单；A 区里的旧程序仍然在（向量表校验会先拦住） */
-                u0_printf("Update A fail\r\n");
+                u0_printf("更新 A 区失败\r\n");
                 BootLoader_Info();
             }
             return;
         }
         else if(datalen >=1 && data[0]=='7')
         {
-            u0_printf("reset\r\n");
+            u0_printf("重启...\r\n");
 
             HAL_Delay(100);
 
@@ -452,6 +452,19 @@ void bootloder_Event(uint8_t* data, uint8_t datalen)
      */
     if(BootStaFlag & IAP_XMODEMD_FLAG)
     {
+        /* 诊断：传输期间出现"既不是 128 字节数据包、也不是 EOT"的帧时打出来。
+         * 常见来源：
+         *   · 两个 133 字节包被一次 IDLE 合并成一帧（长度 266 -> 现在的收包
+         *     逻辑会直接丢弃，主机只能靠超时重发，工具里就记一个"错误"）；
+         *   · 主机发的是 STX(0x02 = 1024 字节包)，而本 bootloader 只支持
+         *     SOH(0x01 = 128 字节包)。
+         * 正常传输时这行不会输出。                                        */
+        if((datalen != 133) && !(datalen == 1 && data[0] == 0x04))
+        {
+            u0_printf("\r\n异常帧：长度=%d 首字节=%02X\r\n", datalen,
+                      (datalen > 0) ? data[0] : 0);
+        }
+
         /*
          * 接收数据包
          *
@@ -470,9 +483,11 @@ void bootloder_Event(uint8_t* data, uint8_t datalen)
 
             if(data[2] != (uint8_t)(~blk))
             {
-                /*
-                 * 包号取反字节不合法：协议错乱，回 NAK 让主机重发本包
-                 */
+                /* 包号取反字节不合法：协议错乱，回 NAK 让主机重发本包。
+                 * 诊断打印：能看到实际收到的包号和取反字节，用来区分
+                 * "整帧错位"（SOH 对但 blk 乱）和"中间丢了字节"。       */
+                u0_printf("\r\nNAK（包号错）：块=%d 收到~=%02X 应为~=%02X\r\n",
+                          blk, data[2], (uint8_t)(~blk));
                 ack=0x15;
                 HAL_UART_Transmit( &huart1, &ack,1,100);
             }
@@ -520,7 +535,7 @@ void bootloder_Event(uint8_t* data, uint8_t datalen)
                             if(((waddr + STM_PAGE_SIZE) > FW_MAX_SIZE) ||
                                (W25Q64_Write1K(waddr) != 0U))
                             {
-                                u0_printf("\r\nW25Q64 err\r\n");
+                                u0_printf("\r\nW25Q64 写入失败\r\n");
                                 BootStaFlag &= ~(IAP_XMODEMD_FLAG | IAP_XMODEMC_FLAG | CMD5_XMODEM_FLAG);
                                 ack = 0x18;                 /* CAN：通知主机停止发送 */
                                 HAL_UART_Transmit(&huart1, &ack, 1, 100);
@@ -549,9 +564,13 @@ void bootloder_Event(uint8_t* data, uint8_t datalen)
                 }
                 else
                 {
-                    /*
-                     * CRC错误
-                     */
+                    /* CRC 错误：回 NAK 请求重发本包。
+                     * 诊断打印：算出来的 CRC 和帧里带的 CRC。
+                     *   · 两者都是"随机值"        -> 链路噪声/波特率误差
+                     *   · got 恒为 0000 或 FFFF    -> 帧被截断（收少了字节）
+                     *   · calc 与 got 只差一位     -> 数据被改动（干扰）        */
+                    u0_printf("\r\nNAK（CRC 错）：块=%d 算得=%04X 收到=%04X\r\n",
+                              blk, crc, (uint16_t)((data[131]<<8)|data[132]));
                     ack=0x15;
                     HAL_UART_Transmit( &huart1, &ack,1,100);
 
@@ -587,7 +606,7 @@ void bootloder_Event(uint8_t* data, uint8_t datalen)
                      *     的长度由 OTA_Info.Firelen[] 记录，回搬时不会读到它们。 */
                     if(W25Q64_Write1K(total - remain) != 0U)
                     {
-                        u0_printf("\r\nW25Q64 err\r\n");
+                        u0_printf("\r\nW25Q64 写入失败\r\n");
                         BootStaFlag &= ~(IAP_XMODEMD_FLAG | IAP_XMODEMC_FLAG | CMD5_XMODEM_FLAG);
                         return;
                     }
@@ -603,7 +622,7 @@ void bootloder_Event(uint8_t* data, uint8_t datalen)
                 ack=0x06;
                 HAL_UART_Transmit( &huart1,&ack, 1,100);
 
-                u0_printf("\r\nOK %d B\r\n", total);
+                u0_printf("\r\n下载完成，共 %d 字节\r\n", total);
                 BootLoader_Info();
 
                 /* 回到菜单：整个下载过程没有写内部 Flash，A 区旧程序依然可用 */
@@ -642,13 +661,13 @@ void bootloder_Event(uint8_t* data, uint8_t datalen)
 					memset(OTA_Info.OTA_ver,0,32);
 					memcpy(OTA_Info.OTA_ver,data,26);
 					 M24C02_WriteOTAInfo();
-					u0_printf("Version number format right\r\n");
+					u0_printf("版本号格式正确，已保存到 EEPROM\r\n");
 					BootLoader_Info();
 					BootStaFlag &= ~SET_VERSION_FLAG;
-				}else{u0_printf("Version number format error.\r\n");
+				}else{u0_printf("版本号格式错误\r\n");
 				}
 			}else{
-			u0_printf("VERSION LENGTH ERROR\r\n");
+			u0_printf("版本号长度错误（必须是 26 字节）\r\n");
 			}
 		}
 
